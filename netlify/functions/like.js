@@ -1,10 +1,11 @@
 // netlify/functions/like.js
+// 整合版：支持 GET（查询）和 POST（点赞），保留详细日志
 
 exports.handler = async (event, context) => {
   console.log('--- Function invoked ---');
   console.log('HTTP Method:', event.httpMethod);
 
-  // 处理预检请求
+  // 处理预检请求（CORS）
   if (event.httpMethod === 'OPTIONS') {
     console.log('OPTIONS request, returning 200');
     return {
@@ -12,7 +13,7 @@ exports.handler = async (event, context) => {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       },
       body: ''
     };
@@ -26,15 +27,17 @@ exports.handler = async (event, context) => {
       throw new Error('Missing GITHUB_TOKEN environment variable');
     }
 
+    // 仓库配置（使用你原来的）
     const owner = 'wish2831';
     const repo = 'dianzan';
     const issueId = 1;
 
-    // 2. 获取 Issue
-    const getUrl = `https://api.github.com/repos/${owner}/${repo}/issues/${issueId}`;
-    console.log('Fetching issue from:', getUrl);
+    // 2. 获取 Issue 的 URL
+    const issueUrl = `https://api.github.com/repos/${owner}/${repo}/issues/${issueId}`;
+    console.log('Fetching issue from:', issueUrl);
 
-    const getResponse = await fetch(getUrl, {
+    // 3. 获取当前 Issue 内容（无论 GET 还是 POST 都需要）
+    const getResponse = await fetch(issueUrl, {
       headers: {
         'Authorization': `token ${token}`,
         'Accept': 'application/vnd.github.v3+json'
@@ -50,7 +53,7 @@ exports.handler = async (event, context) => {
     const issue = await getResponse.json();
     console.log('Issue fetched successfully');
 
-    // 3. 解析点赞数
+    // 4. 解析当前点赞数
     const content = issue.body || '';
     console.log('Issue body:', content.substring(0, 100) + '...');
 
@@ -66,42 +69,53 @@ exports.handler = async (event, context) => {
     }
     console.log('Current count:', currentCount);
 
-    // 4. 增加点赞数
-    const newCount = currentCount + 1;
-    console.log('New count:', newCount);
+    // 5. 根据请求方法处理
+    if (event.httpMethod === 'POST') {
+      // POST：增加点赞数
+      const newCount = currentCount + 1;
+      console.log('New count (POST):', newCount);
 
-    // 5. 更新 Issue
-    const updateUrl = `https://api.github.com/repos/${owner}/${repo}/issues/${issueId}`;
-    console.log('Updating issue at:', updateUrl);
+      // 更新 Issue
+      const updateResponse = await fetch(issueUrl, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          body: `\`\`\`json\n{"count": ${newCount}}\n\`\`\``
+        })
+      });
 
-    const updateResponse = await fetch(updateUrl, {
-      method: 'PATCH',
-      headers: {
-        'Authorization': `token ${token}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        body: `\`\`\`json\n{"count": ${newCount}}\n\`\`\``
-      })
-    });
+      console.log('PATCH response status:', updateResponse.status);
+      if (!updateResponse.ok) {
+        const errorText = await updateResponse.text();
+        throw new Error(`Failed to update issue: ${updateResponse.status} - ${errorText}`);
+      }
 
-    console.log('PATCH response status:', updateResponse.status);
-    if (!updateResponse.ok) {
-      const errorText = await updateResponse.text();
-      throw new Error(`Failed to update issue: ${updateResponse.status} - ${errorText}`);
+      console.log('Issue updated successfully');
+      return {
+        statusCode: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        },
+        body: JSON.stringify({ success: true, count: newCount })
+      };
     }
 
-    console.log('Issue updated successfully');
-
+    // GET：只返回当前点赞数，不修改
+    console.log('GET request, returning current count without modification');
     return {
       statusCode: 200,
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       },
-      body: JSON.stringify({ success: true, count: newCount })
+      body: JSON.stringify({ success: true, count: currentCount })
     };
 
   } catch (error) {
@@ -114,7 +128,7 @@ exports.handler = async (event, context) => {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       },
       body: JSON.stringify({ success: false, error: error.message })
     };
